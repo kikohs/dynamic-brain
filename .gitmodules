@@ -1,0 +1,6 @@
+[submodule "core"]
+	path = core
+	url = git@github.com:kikohs/mld.git
+[submodule "visualization"]
+	path = visualization
+	url = git@github.com:kikohs/tsviz.git
