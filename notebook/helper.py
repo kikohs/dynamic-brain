@@ -11,8 +11,6 @@ import matplotlib.pyplot as plt
 import scipy.io
 import json
 from collections import Counter, OrderedDict, defaultdict, Callable
-import sklearn as sk
-import sklearn.cluster
 import itertools
 from bitsets import bitset  # pip install bitsets
 
@@ -30,7 +28,7 @@ with open(filename, 'r') as f:
 print('Read: ' + filename)
 
 FUNC_IDS = []
-filename = os.path.join(NOTEBOOK_INPUT_DIR,'input/brain_functional_ids.txt')
+filename = os.path.join(NOTEBOOK_INPUT_DIR, 'input/brain_functional_ids.txt')
 with open(filename, 'r') as f:
     reader = csv.reader(f, delimiter=',')
     for row in reader:
@@ -38,17 +36,17 @@ with open(filename, 'r') as f:
 print('Read: ' + filename)
 
 filename = os.path.join(NOTEBOOK_INPUT_DIR, 'input/brain_graph_68.txt')
-A = np.loadtxt(open(filename,"rb"), dtype=int, delimiter=',', skiprows=0)
+adj = np.loadtxt(open(filename, "rb"), dtype=int, delimiter=',', skiprows=0)
 # Remove diagonal elements to have a real adjacency matrix
-A = A - np.diag(np.diag(A))
-AG = nx.from_numpy_matrix(A)
+adj = adj - np.diag(np.diag(adj))
+AG = nx.from_numpy_matrix(adj)
 print('Read: ' + filename), '\n'
-print 'Average ajacency matrix:', A.shape
+print 'Average ajacency matrix:', adj.shape
 
 FUNC_ZONES = 7
-FUNC_NODE_COUT = A.shape[0]
+FUNC_NODE_COUT = AG.number_of_nodes()
 X_SPACING = 3
-Y_SPACING = 3
+Y_SPACING = 5
 
 def create_node_data(layer_id, input_id, weight,
                 brain_lab=BRAIN_LABELS, brain_func_ids=FUNC_IDS):
@@ -78,6 +76,7 @@ def create_node_data(layer_id, input_id, weight,
     data['name'] = name
 
     return data
+
 
 def build_graph_from_activated_layers(feature, tol, input_graph=AG):
     X = feature.reshape((-1, input_graph.number_of_nodes()))
@@ -141,6 +140,7 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
 
     return G
 
+
 class Component(object):
     def __init__(self, component_id):
         self.component_id = component_id
@@ -192,10 +192,11 @@ class Component(object):
 
             relative_pos = layer_positions[lp]
             self.feat.append((relative_pos, input_id))
-            inIds.update( { input_id : 1} )
+            inIds.update({input_id: 1})
 
         self.layers = sorted(layer_positions.keys())
         self.input_ids = OrderedDict(sorted(inIds.iteritems(), key=lambda t: t[0]))
+
         # Compute probability for each input id
         self.compfeat = [(k, float(v)/self.width()) for k, v in self.input_ids.iteritems()]
         # Extract subgraphs
@@ -265,7 +266,7 @@ class Component(object):
         label_end_x = -2
         for k, p in pos.iteritems():
             lab = g.node[k]['name'] + ' ' + str(g.node[k]['input_id'])
-            ax.text(label_start_x, p[1], lab, fontsize=7)
+            ax.text(label_start_x, p[1], lab, fontsize=14)
 
         last_layer = self.layers[-1]
         full_width = last_layer + 1
@@ -273,19 +274,22 @@ class Component(object):
         x_ticks = np.arange(0, (full_width * X_SPACING), X_SPACING)
 
         plt.xticks(x_ticks, x_labels, size='large')
-        plt.xlim(label_end_x+1, label_end_x + X_SPACING + last_layer * X_SPACING)
+        plt.xlim(label_start_x-1,
+            label_end_x + X_SPACING + last_layer * X_SPACING)
 
+        # last_id = self.input_ids.keys()[-1]
+        # plt.ylim(0, last_id * Y_SPACING)
         ax.set_yticklabels([])
         ax.grid(False)
 
     def draw(self, figid=None, figsize=None):
         if self.g.number_of_nodes() == 0:
             print 'Empty graph for component', self.component_id
-            return
-        subgraph_height = 3
+            return None
+        subgraph_height = 10
         if not figsize:
-            figsize = (12, len(self.subgraphs) * subgraph_height + 1)
-        fig = plt.figure(figid, figsize=figsize)
+            figsize = (16, len(self.subgraphs) * subgraph_height + 1)
+        fig = plt.figure(figid, figsize=figsize, dpi=360)
         fig.set_visible(False)
         fig.suptitle('Patterns of component ' + str(self.component_id), fontsize=14, fontweight='bold')
         ax1 = None
