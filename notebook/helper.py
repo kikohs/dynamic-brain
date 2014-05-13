@@ -5,6 +5,7 @@ import os
 import math
 import csv
 import networkx as nx
+from networkx.readwrite import json_graph
 import scipy as sp
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,7 +21,7 @@ NOTEBOOK_OUT_DIR = os.path.join(NOTEBOOK_DIR, 'data/')
 
 # Read labels and
 BRAIN_LABELS = []
-filename = os.path.join(NOTEBOOK_INPUT_DIR,'input/brain_labels_68.txt')
+filename = os.path.join(NOTEBOOK_INPUT_DIR, 'input/brain_labels_68.txt')
 with open(filename, 'r') as f:
     reader = csv.reader(f, delimiter=',')
     for row in reader:
@@ -48,8 +49,9 @@ FUNC_NODE_COUT = AG.number_of_nodes()
 X_SPACING = 3
 Y_SPACING = 5
 
+
 def create_node_data(layer_id, input_id, weight,
-                brain_lab=BRAIN_LABELS, brain_func_ids=FUNC_IDS):
+                     brain_lab=BRAIN_LABELS, brain_func_ids=FUNC_IDS):
     data = {}
     data['ts_group_id'] = 0
     data['layer_pos'] = layer_id
@@ -87,23 +89,24 @@ def build_graph_from_activated_layers(feature, tol, input_graph=AG):
     input_ids = bitset('Graph', ids)
 
     # Create edges and nodes if needed
-    for i in xrange(nb_layers-1):
+    for i in xrange(nb_layers - 1):
         current_nodes = input_ids.frombools(X[i] > tol)
-        next_nodes = input_ids.frombools(X[i+1] > tol)
+        next_nodes = input_ids.frombools(X[i + 1] > tol)
         for c in current_nodes.members():
             src = c + (i * len(ids))
             for n in next_nodes.members():
-                tgt = n + ((i+1) * len(ids))
+                tgt = n + ((i + 1) * len(ids))
                 # Check that input_id are real adajcent
                 # in the global adjacency matrix
-                if input_graph.has_edge(c, n) or c == n:
+                # beware, the global adj matrix starts at 0
+                if input_graph.has_edge(c - 1, n - 1) or c == n:
 
                     if src not in G:
-                        data = create_node_data(i, c, X[i, c-1])
+                        data = create_node_data(i, c, X[i, c - 1])
                         G.add_node(src, data)
 
                     if tgt not in G:
-                        data = create_node_data(i+1, n, X[i+1, n-1])
+                        data = create_node_data(i + 1, n, X[i + 1, n - 1])
                         G.add_node(tgt, data)
 
                     G.add_edge(src, tgt)
@@ -117,23 +120,25 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
     input_node_count = input_graph.number_of_nodes()
 
     # Create edges, and crate nodes if needed
-    for i in xrange(nb_layers-1):
+    for i in xrange(nb_layers - 1):
         # for each current node
         for c in itertools.ifilter(lambda x: x[0][0] == i and x[1] > tol, X):
             input_id = c[0][1] + 1
             src = input_id + (i * input_node_count)
-            for n in itertools.ifilter(lambda x: x[0][0] == i+1 and x[1] > tol, X):
+            for n in itertools.ifilter(lambda x: x[0][0] == i + 1 and x[1] > tol, X):
+
                 tgt_in_id = n[0][1] + 1
-                tgt = tgt_in_id + ((i+1) * input_node_count)
-                # Check that input_id are real adajcent in the global adjacency matrix
-                if input_graph.has_edge(input_id, tgt_in_id) or input_id == tgt_in_id:
+                tgt = tgt_in_id + ((i + 1) * input_node_count)
+                # Check that input_id are real adajcent in the global
+                # adjacency matrix. Beware, ids in adj matrix starts at 0
+                if input_graph.has_edge(input_id - 1, tgt_in_id - 1) or input_id == tgt_in_id:
 
                     if src not in G:
                         data = create_node_data(i, input_id, c[1])
                         G.add_node(src, data)
 
                     if tgt not in G:
-                        data = create_node_data(i+1, tgt_in_id, n[1])
+                        data = create_node_data(i + 1, tgt_in_id, n[1])
                         G.add_node(tgt, data)
 
                     G.add_edge(src, tgt)
@@ -141,9 +146,43 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
     return G
 
 
+def dump_component(method_name, component):
+    folderpath = os.path.join(NOTEBOOK_OUT_DIR, method_name)
+    if not os.path.exists(folderpath):  # create folder is needed
+        os.makedirs(folderpath)
+
+    fullpath = os.path.join(folderpath,
+                            'component_' + str(component.id) + '.json')
+    with open(fullpath, 'w') as f:
+        json.dump(json_graph.node_link_data(component.g), f)
+    return fullpath
+
+
+def export_components_to_matlab(method_name, components):
+    folderpath = os.path.join(NOTEBOOK_OUT_DIR, method_name)
+    if not os.path.exists(folderpath):  # create folder is needed
+        os.makedirs(folderpath)
+
+    path = os.path.join(folderpath, method_name + '_components')
+    out = {}
+    for c in components:
+        plist = []
+        for p in c.patterns():
+            a = np.zeros((FUNC_NODE_COUT,), dtype=np.int8)
+            for k, v in p.input_ids.iteritems():
+                a[k-1] = v
+            plist.append(a)
+
+        out['component_' + str(c.id)] = np.array(plist)
+
+    sp.io.savemat(path, out)
+    print 'Wrote: ', path
+
+
 class Component(object):
+
     def __init__(self, component_id):
-        self.component_id = component_id
+        self.id = component_id
         self.g = nx.Graph()
         self.layers = None
         self.input_ids = None
@@ -195,10 +234,12 @@ class Component(object):
             inIds.update({input_id: 1})
 
         self.layers = sorted(layer_positions.keys())
-        self.input_ids = OrderedDict(sorted(inIds.iteritems(), key=lambda t: t[0]))
+        self.input_ids = OrderedDict(sorted(
+            inIds.iteritems(), key=lambda t: t[0]))
 
         # Compute probability for each input id
-        self.compfeat = [(k, float(v)/self.width()) for k, v in self.input_ids.iteritems()]
+        self.compfeat = [(k, float(v) / self.width())
+                         for k, v in self.input_ids.iteritems()]
         # Extract subgraphs
         self.subgraphs = nx.connected_component_subgraphs(self.g)
 
@@ -235,8 +276,71 @@ class Component(object):
     def layers(self):
         return self.layers
 
+    def patterns(self):
+        if not self.subgraphs:
+            return None
+        patterns = []
+        for i, s in enumerate(self.subgraphs):
+            p = Pattern(self.id, i)
+            p.g = s  # set graph attr
+            p.extract_properties()
+            patterns.append(p)
+        return patterns
+
+    def _draw_graph(self, fig, ax, g):
+        pos = nx.get_node_attributes(g, 'pos')
+        color = nx.get_node_attributes(g, 'weight').values()
+        nx.draw_networkx_edges(g, pos, alpha=0.4)
+        nx.draw_networkx_nodes(g, pos,
+                               node_size=80,
+                               node_color=color,
+                               cmap=plt.cm.Reds_r,
+                               vmin=0.0, vmax=1.0)
+
+        label_start_x = -7
+        label_end_x = -2
+        for k, p in pos.iteritems():
+            lab = g.node[k]['name'] + ' ' + \
+                str(g.node[k]['input_id']) + ' ' + \
+                str(g.node[k]['func_id'])
+            ax.text(label_start_x, p[1], lab, fontsize=14)
+
+        last_layer = self.layers[-1]
+        full_width = last_layer + 1
+        x_labels = np.arange(full_width)
+        x_ticks = np.arange(0, (full_width * X_SPACING), X_SPACING)
+
+        plt.xticks(x_ticks, x_labels, size='large')
+        plt.xlim(label_start_x - 1,
+                 label_end_x + X_SPACING + last_layer * X_SPACING)
+
+        # last_id = self.input_ids.keys()[-1]
+        # plt.ylim(0, last_id * Y_SPACING)
+        ax.set_yticklabels([])
+        ax.grid(False)
+
+    def draw(self, figid=None, figsize=None):
+        if self.g.number_of_nodes() == 0:
+            print 'Empty graph for component', self.id
+            return None
+        subgraph_height = 10
+        if not figsize:
+            figsize = (16, len(self.subgraphs) * subgraph_height + 1)
+        fig = plt.figure(figid, figsize=figsize, dpi=360)
+        fig.set_visible(False)
+        fig.suptitle('Patterns of component ' +
+                     str(self.id), fontsize=14, fontweight='bold')
+        ax1 = None
+        for i, s in enumerate(self.subgraphs):
+            ax = fig.add_subplot(len(self.subgraphs), 1, i)
+            if i == 0:
+                ax1 = ax
+            self._draw_graph(fig, ax, s)
+        ax1.set_xlabel('time step')  # set only for last figure
+        return fig
+
     def __str__(self):
-        s = 'Component id: ' + str(self.component_id) + '\n'
+        s = 'Component id: ' + str(self.id) + '\n'
         if self.cluster_id:
             s += ' cluster id: ' + str(self.cluster_id) + '\n'
         if len(self.subgraphs) > 0:
@@ -252,57 +356,16 @@ class Component(object):
     def __repr__(self):
         return self.__str__()
 
-    def _draw_graph(self, fig, ax, g):
-        pos = nx.get_node_attributes(g, 'pos')
-        color = nx.get_node_attributes(g, 'weight').values()
-        nx.draw_networkx_edges(g, pos, alpha=0.4)
-        nx.draw_networkx_nodes(g, pos,
-                               node_size=80,
-                               node_color=color,
-                               cmap=plt.cm.Reds_r,
-                               vmin=0.0, vmax=1.0)
 
-        label_start_x = -7
-        label_end_x = -2
-        for k, p in pos.iteritems():
-            lab = g.node[k]['name'] + ' ' + str(g.node[k]['input_id'])
-            ax.text(label_start_x, p[1], lab, fontsize=14)
+class Pattern(Component):
 
-        last_layer = self.layers[-1]
-        full_width = last_layer + 1
-        x_labels = np.arange(full_width)
-        x_ticks = np.arange(0, (full_width * X_SPACING), X_SPACING)
-
-        plt.xticks(x_ticks, x_labels, size='large')
-        plt.xlim(label_start_x-1,
-            label_end_x + X_SPACING + last_layer * X_SPACING)
-
-        # last_id = self.input_ids.keys()[-1]
-        # plt.ylim(0, last_id * Y_SPACING)
-        ax.set_yticklabels([])
-        ax.grid(False)
-
-    def draw(self, figid=None, figsize=None):
-        if self.g.number_of_nodes() == 0:
-            print 'Empty graph for component', self.component_id
-            return None
-        subgraph_height = 10
-        if not figsize:
-            figsize = (16, len(self.subgraphs) * subgraph_height + 1)
-        fig = plt.figure(figid, figsize=figsize, dpi=360)
-        fig.set_visible(False)
-        fig.suptitle('Patterns of component ' + str(self.component_id), fontsize=14, fontweight='bold')
-        ax1 = None
-        for i, s in enumerate(self.subgraphs):
-            ax = fig.add_subplot(len(self.subgraphs), 1, i)
-            if i == 0:
-                ax1 = ax
-            self._draw_graph(fig, ax, s)
-        ax1.set_xlabel('time step')  # set only for last figure
-        return fig
+    def __init__(self, component_id, pattern_id):
+        super(Pattern, self).__init__(component_id)
+        self.pid = pattern_id
 
 
 class Patient:
+
     def __init__(self, patient_id):
         self.pid = patient_id
         self.components = []
@@ -320,11 +383,12 @@ class Patient:
     def mean(self, comp_prop):
         if not self.components:
             return None
-        f = lambda x: float(sum(x))/ len(x)
+        f = lambda x: float(sum(x)) / len(x)
         # calc mean
         m = self.apply_on_components(f, comp_prop)
         # standard dev
-        std = math.sqrt(f(map(lambda x: (x-m)**2, self.aggregate(comp_prop))))
+        std = math.sqrt(
+            f(map(lambda x: (x - m) ** 2, self.aggregate(comp_prop))))
         return m, std
 
     def component_count(self):
