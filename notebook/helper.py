@@ -167,16 +167,118 @@ def export_components_to_matlab(method_name, components):
     out = {}
     for c in components:
         plist = []
-        for p in c.patterns():
-            a = np.zeros((FUNC_NODE_COUT,), dtype=np.int8)
-            for k, v in p.input_ids.iteritems():
-                a[k-1] = v
-            plist.append(a)
+        patterns = c.patterns()
+        if patterns:
+            for p in patterns:
+                a = np.zeros((FUNC_NODE_COUT,), dtype=np.int8)
+                for k, v in p.input_ids.iteritems():
+                    a[k-1] = v
+                plist.append(a)
 
-        out['component_' + str(c.id)] = np.array(plist)
+            out['component_' + str(c.id)] = np.array(plist)
 
     sp.io.savemat(path, out)
     print 'Wrote: ', path
+
+
+def rebuild_component_from_cluster(comp_id, comp_list, tol):
+    """Extract average component from a list of
+    component in the same cluster
+    """
+    # Histogram
+    counter = defaultdict(int)
+    for c in comp_list:
+        for pair in c.features():
+            counter[pair] += 1
+    # order by key
+    ordered_feat = sorted(counter.iteritems())
+    # Count for each layer how many nodes are activated
+    pCount = Counter(map(lambda x: x[0][0], ordered_feat))
+    pCountS = sorted(pCount.iteritems())
+
+    # Create probability for each node
+    proba_feat = []
+    for i in ordered_feat:
+        cur_layer = i[0][0]
+        elem = (i[0], float(i[1]) / pCountS[cur_layer][1])
+        proba_feat.append(elem)
+
+    p = Component(comp_id)
+    p.cluster_id = comp_list[0].cluster_id
+    p.reconstruct_from_list(proba_feat, tol)
+
+    return p
+
+
+def plot_component_repartition(figsize, components, cluster_count, columns=8):
+    plt.figure(1, figsize)
+    nn = cluster_count
+    rows = math.ceil(float(len(components)) / columns)
+    for i in xrange(nn):
+        plt.subplot(rows, columns, i+1)
+        active_nodes = list(itertools.chain(*[ c.func_ids for c in components[i]]))
+        plt.hist(active_nodes, FUNC_ZONES)
+        plt.title('Cluster id: ' + str(i))
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_component_width_and_height(figsize, components, title='Component'):
+    fig = plt.figure(1, figsize)
+    ax1 = fig.add_subplot(1, 2, 1)  # 1 row, 2 columns, first plot
+    ax1.bar(np.arange(len(components)),
+            [c.height() for c in components], 1)
+    plt.xlabel(title + ' id')
+    plt.ylabel('Height')
+    plt.title(title + ' heights')
+
+    ax2 = fig.add_subplot(1, 2, 2)  # 1 row, 2 columns, first plot
+    ax2.bar(np.arange(len(components)),
+            [c.width() for c in components], 1)
+    plt.xlabel(title + ' id')
+    plt.ylabel('Width')
+    plt.title(title + ' widths')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_component_func_repartition(figsize, components,
+                                    columns=4, title='Component'):
+    fig = plt.figure(1, figsize)
+    rows = math.ceil(float(len(components)) / columns)
+    for i, c in enumerate(components):
+        ax = fig.add_subplot(rows, columns, i+1)
+        # create histo for each pattern
+        counter = Counter(c.func_ids)
+        # add 0 for mimssing values
+        for f in xrange(1, FUNC_ZONES+1):
+            if f not in counter:
+                counter[f] = 0
+        # ordered by func id
+        val = OrderedDict(sorted(counter.iteritems(), key=lambda t: t[0]))
+        # plot
+        ax.bar(np.arange(1, FUNC_ZONES+1), val.values(), 0.8)
+        plt.xlabel('Functional id')
+        plt.ylabel('#nodes')
+        plt.title(title + ' ' + str(i))
+        plt.xticks(np.arange(1, FUNC_ZONES+1))
+
+    plt.tight_layout()
+    plt.show()
+
+
+def draw_and_save_patterns(method_name, components):
+    for i, c in enumerate(components):
+        f = c.draw()
+        if f:
+            f.set_visible(True)
+            f.savefig(os.path.join(NOTEBOOK_OUT_DIR,
+                                   'figures/' + method_name + '/' +
+                                   method_name + '_' + str(i) +
+                                   '.png'))
+            r = dump_component(method_name, c)
+            print 'Wrote ', r
 
 
 class Component(object):
