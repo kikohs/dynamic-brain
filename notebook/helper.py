@@ -210,6 +210,25 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
     return p
 
 
+def filter_noisy_cluster(grouped_components):
+    filt_grouped_components = OrderedDict()
+    for i, cluster in enumerate(grouped_components):
+        if len(cluster) > 1:
+            active_nodes = Counter(itertools.chain(*[c.func_ids for c in cluster]))
+            # if more than 2 functional ids
+            # are in all the nodes of the same cluster
+            if len(active_nodes) > 1:
+                v = sorted(active_nodes.values(), reverse=True)
+                # if the most represented value is at least
+                # two times more present than the second most represented one
+                if v[0] >= 2 * v[1]:
+                    filt_grouped_components[i] = cluster
+            else:
+                filt_grouped_components[i] = cluster
+
+    return filt_grouped_components
+
+
 def plot_component_repartition(figsize, components, cluster_count, columns=8):
     plt.figure(1, figsize)
     nn = cluster_count
@@ -248,7 +267,6 @@ def plot_component_func_repartition(figsize, components,
     fig = plt.figure(1, figsize)
     rows = math.ceil(float(len(components)) / columns)
     for i, c in enumerate(components):
-        ax = fig.add_subplot(rows, columns, i+1)
         # create histo for each pattern
         counter = Counter(c.func_ids)
         # add 0 for mimssing values
@@ -257,12 +275,14 @@ def plot_component_func_repartition(figsize, components,
                 counter[f] = 0
         # ordered by func id
         val = OrderedDict(sorted(counter.iteritems(), key=lambda t: t[0]))
-        # plot
-        ax.bar(np.arange(1, FUNC_ZONES+1), val.values(), 0.8)
-        plt.xlabel('Functional id')
-        plt.ylabel('#nodes')
-        plt.title(title + ' ' + str(i))
-        plt.xticks(np.arange(1, FUNC_ZONES+1))
+        if sum(val.values()) > 0:
+            # plot
+            ax = fig.add_subplot(rows, columns, i+1)
+            ax.bar(np.arange(1, FUNC_ZONES+1), val.values(), 0.8)
+            plt.xlabel('Functional id')
+            plt.ylabel('#nodes')
+            plt.title(title + ' ' + str(i))
+            plt.xticks(np.arange(1, FUNC_ZONES+1))
 
     plt.tight_layout()
     plt.show()
@@ -402,8 +422,8 @@ class Component(object):
         label_start_x = -7
         label_end_x = -2
         for k, p in pos.iteritems():
-            lab = g.node[k]['name'] + ' ' + \
-                str(g.node[k]['input_id']) + ' ' + \
+            lab = str(g.node[k]['input_id']) + ' ' + \
+                g.node[k]['name'] + ' ' + \
                 str(g.node[k]['func_id'])
             ax.text(label_start_x, p[1], lab, fontsize=14)
 
