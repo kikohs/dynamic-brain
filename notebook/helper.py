@@ -4,6 +4,7 @@ import sys
 import os
 import math
 import csv
+import shutil
 import networkx as nx
 from networkx.readwrite import json_graph
 import scipy as sp
@@ -90,11 +91,15 @@ def build_graph_from_activated_layers(feature, tol, input_graph=AG):
 
     # Create edges and nodes if needed
     for i in xrange(nb_layers - 1):
-        current_nodes = input_ids.frombools(X[i] > tol)
-        next_nodes = input_ids.frombools(X[i + 1] > tol)
-        for c in current_nodes.members():
+        current_nodes = input_ids.frombools(X[i] > tol).members()
+        current_nodes += input_ids.frombools(X[i] < -tol).members()
+        next_nodes = input_ids.frombools(X[i + 1] > tol).members()
+        next_nodes += input_ids.frombools(X[i + 1] < -tol).members()
+
+
+        for c in current_nodes:
             src = c + (i * len(ids))
-            for n in next_nodes.members():
+            for n in next_nodes:
                 tgt = n + ((i + 1) * len(ids))
                 # Check that input_id are real adajcent
                 # in the global adjacency matrix
@@ -122,10 +127,12 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
     # Create edges, and crate nodes if needed
     for i in xrange(nb_layers - 1):
         # for each current node
-        for c in itertools.ifilter(lambda x: x[0][0] == i and x[1] > tol, X):
+        for c in itertools.ifilter(lambda x: x[0][0] == i
+                                   and (x[1] > tol or x[1] < -tol), X):
             input_id = c[0][1] + 1
             src = input_id + (i * input_node_count)
-            for n in itertools.ifilter(lambda x: x[0][0] == i + 1 and x[1] > tol, X):
+            for n in itertools.ifilter(lambda x: x[0][0] == i + 1
+                                       and (x[1] > tol or x[1] < -tol), X):
 
                 tgt_in_id = n[0][1] + 1
                 tgt = tgt_in_id + ((i + 1) * input_node_count)
@@ -146,22 +153,32 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
     return G
 
 
-def dump_component(method_name, component):
+def dump_components(method_name, components, overrideFolder=True):
     folderpath = os.path.join(NOTEBOOK_OUT_DIR, method_name)
     if not os.path.exists(folderpath):  # create folder is needed
         os.makedirs(folderpath)
+    else:
+        if overrideFolder:
+            shutil.rmtree(folderpath)  # delete content
+            os.makedirs(folderpath)
 
-    fullpath = os.path.join(folderpath,
-                            'component_' + str(component.id) + '.json')
-    with open(fullpath, 'w') as f:
-        json.dump(json_graph.node_link_data(component.g), f)
-    return fullpath
+    for c in components:
+        if c.g.number_of_nodes() > 0:
+            fullpath = os.path.join(folderpath,
+                                    'component_' + str(c.id) + '.json')
+            with open(fullpath, 'w') as f:
+                json.dump(json_graph.node_link_data(c.g), f)
+    return folderpath
 
 
-def export_components_to_matlab(method_name, components):
+def export_components_to_matlab(method_name, components, overrideFolder=False):
     folderpath = os.path.join(NOTEBOOK_OUT_DIR, method_name)
     if not os.path.exists(folderpath):  # create folder is needed
         os.makedirs(folderpath)
+    else:
+        if overrideFolder:
+            shutil.rmtree(folderpath)  # delete content
+            os.makedirs(folderpath)
 
     path = os.path.join(folderpath, method_name + '_components')
     out = {}
@@ -178,7 +195,19 @@ def export_components_to_matlab(method_name, components):
             out['component_' + str(c.id)] = np.array(plist)
 
     sp.io.savemat(path, out)
-    print 'Wrote: ', path
+    return path
+
+
+def draw_and_save_patterns(method_name, components):
+    print 'Wrote json components to:', dump_components(method_name, components)
+    print 'Wrote', export_components_to_matlab(method_name, components)
+    for i, c in enumerate(components):
+        f = c.draw()
+        if f:
+            f.set_visible(True)
+            f.savefig(os.path.join(NOTEBOOK_OUT_DIR, method_name + '/' +
+                                   method_name + '_' + str(i) +
+                                   '.png'))
 
 
 def rebuild_component_from_cluster(comp_id, comp_list, tol):
@@ -192,15 +221,26 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
             counter[pair] += 1
     # order by key
     ordered_feat = sorted(counter.iteritems())
-    # Count for each layer how many nodes are activated
-    pCount = Counter(map(lambda x: x[0][0], ordered_feat))
-    pCountS = sorted(pCount.iteritems())
+
+    # # Count for each layer how many nodes are activated
+    # pCount = Counter(map(lambda x: x[0][0], ordered_feat))
+    # pCountS = sorted(pCount.iteritems())
+
+    # # Create probability for each node
+    # proba_feat = []
+    # for i in ordered_feat:
+    #     cur_layer = i[0][0]
+    #     elem = (i[0], float(i[1]) / pCountS[cur_layer][1])
+    #     print elem
+    #     proba_feat.append(elem)
+
+    # Get max histogram
+    max_node_occurence = max(counter.values())
 
     # Create probability for each node
     proba_feat = []
     for i in ordered_feat:
-        cur_layer = i[0][0]
-        elem = (i[0], float(i[1]) / pCountS[cur_layer][1])
+        elem = (i[0], float(i[1]) / max_node_occurence)
         proba_feat.append(elem)
 
     p = Component(comp_id)
@@ -288,19 +328,6 @@ def plot_component_func_repartition(figsize, components,
     plt.show()
 
 
-def draw_and_save_patterns(method_name, components):
-    for i, c in enumerate(components):
-        f = c.draw()
-        if f:
-            f.set_visible(True)
-            f.savefig(os.path.join(NOTEBOOK_OUT_DIR,
-                                   'figures/' + method_name + '/' +
-                                   method_name + '_' + str(i) +
-                                   '.png'))
-            r = dump_component(method_name, c)
-            print 'Wrote ', r
-
-
 class Component(object):
 
     def __init__(self, component_id):
@@ -360,8 +387,10 @@ class Component(object):
             inIds.iteritems(), key=lambda t: t[0]))
 
         # Compute probability for each input id
-        self.compfeat = [(k, float(v) / self.width())
-                         for k, v in self.input_ids.iteritems()]
+        # self.compfeat = [(k, float(v) / self.width())
+        #                  for k, v in self.input_ids.iteritems()]
+
+        self.compfeat = [(k, v) for k, v in self.input_ids.iteritems()]
         # Extract subgraphs
         self.subgraphs = nx.connected_component_subgraphs(self.g)
 
@@ -416,7 +445,7 @@ class Component(object):
         nx.draw_networkx_nodes(g, pos,
                                node_size=80,
                                node_color=color,
-                               cmap=plt.cm.Reds_r,
+                               cmap=plt.cm.PuOr,
                                vmin=0.0, vmax=1.0)
 
         label_start_x = -7
