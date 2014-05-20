@@ -96,7 +96,6 @@ def build_graph_from_activated_layers(feature, tol, input_graph=AG):
         next_nodes = input_ids.frombools(X[i + 1] > tol).members()
         next_nodes += input_ids.frombools(X[i + 1] < -tol).members()
 
-
         for c in current_nodes:
             src = c + (i * len(ids))
             for n in next_nodes:
@@ -235,12 +234,13 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
     #     proba_feat.append(elem)
 
     # Get max histogram
-    max_node_occurence = max(counter.values())
+    # max_node_occurence = max(counter.values())
+    divider = len(comp_list)
 
     # Create probability for each node
     proba_feat = []
     for i in ordered_feat:
-        elem = (i[0], float(i[1]) / max_node_occurence)
+        elem = (i[0], float(i[1]) / divider)
         proba_feat.append(elem)
 
     p = Component(comp_id)
@@ -248,6 +248,37 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
     p.reconstruct_from_list(proba_feat, tol)
 
     return p
+
+
+def create_binary_feature_matrix(components):
+    """Each component will be vectorized so the number of columns in the matrix
+    is number_of_nodes * actual_max_width
+    """
+    actual_max_width = max([c.width() for c in components]) + 1
+    feat_columns = FUNC_NODE_COUT * actual_max_width
+    feat_rows = len(components)
+    # Create matrix of features
+    A = sp.sparse.lil_matrix((feat_rows, feat_columns), dtype=np.int8)
+    # Fill values
+    for i, c in enumerate(components):  # for each component
+        for f in c.features():  # for each feature of a component
+            # calc offset, f[0] is the layer number, f[1] the input_id
+            x = f[0] * FUNC_NODE_COUT + f[1] - 1
+            A[i, x] = 1
+    return A
+
+
+def create_compressed_feature_matrix(components):
+    feat_columns = FUNC_NODE_COUT
+    feat_rows = len(components)
+    # Create matrix of features
+    B = sp.sparse.lil_matrix((feat_rows, feat_columns), dtype=np.float64)
+    # Fill values
+    for i, c in enumerate(components):  # for each component
+        for f in c.compressed_features():
+            idx = f[0] - 1
+            B[i, idx] = f[1]
+    return B
 
 
 def filter_noisy_cluster(grouped_components):
@@ -445,8 +476,7 @@ class Component(object):
         nx.draw_networkx_nodes(g, pos,
                                node_size=80,
                                node_color=color,
-                               cmap=plt.cm.PuOr,
-                               vmin=0.0, vmax=1.0)
+                               cmap=plt.cm.PuOr)
 
         label_start_x = -7
         label_end_x = -2
