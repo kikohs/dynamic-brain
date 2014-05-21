@@ -268,6 +268,19 @@ def create_binary_feature_matrix(components):
     return A
 
 
+def create_weight_feature_matrix(components):
+    actual_max_width = max([c.width() for c in components]) + 1
+    feat_columns = FUNC_NODE_COUT * actual_max_width
+    feat_rows = len(components)
+    A = sp.sparse.lil_matrix((feat_rows, feat_columns), dtype=np.float64)
+    # Fill values
+    for i, c in enumerate(components):  # for each component
+        for k, v in c.weights().iteritems():  # for each feature of a component
+            # k is the input_id
+            A[i, k - 1] = v
+    return A
+
+
 def create_compressed_feature_matrix(components):
     feat_columns = FUNC_NODE_COUT
     feat_rows = len(components)
@@ -424,6 +437,20 @@ class Component(object):
         self.compfeat = [(k, v) for k, v in self.input_ids.iteritems()]
         # Extract subgraphs
         self.subgraphs = nx.connected_component_subgraphs(self.g)
+
+    def weights(self):
+        return OrderedDict(sorted(
+            nx.get_node_attributes(self.g, 'weight').iteritems(),
+            key=lambda t: t[0]))
+
+    def weight_vector(self):
+        weights = self.weights()
+        size = weights.keys()[-1]
+        W = np.zeros(size, dtype=np.float64)
+        # for each feature of a component
+        for k, v in weights.iteritems():
+            W[k - 1] = v
+        return W
 
     def width(self):
         return len(self.layers)
