@@ -197,12 +197,14 @@ def export_components_to_matlab(method_name, components, overrideFolder=False):
     return path
 
 
-def draw_and_save_patterns(method_name, components):
+def draw_and_save_patterns(method_name, components, meta_title=None):
     print 'Wrote json components to:', dump_components(method_name, components)
     print 'Wrote', export_components_to_matlab(method_name, components)
     for i, c in enumerate(components):
         f = c.draw()
         if f:
+            if meta_title:
+                f.suptitle(meta_title, fontsize=14, fontweight='bold')
             f.set_visible(True)
             f.savefig(os.path.join(NOTEBOOK_OUT_DIR, method_name + '/' +
                                    method_name + '_' + str(i) +
@@ -220,23 +222,7 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
             counter[pair] += 1
     # order by key
     ordered_feat = sorted(counter.iteritems())
-
-    # # Count for each layer how many nodes are activated
-    # pCount = Counter(map(lambda x: x[0][0], ordered_feat))
-    # pCountS = sorted(pCount.iteritems())
-
-    # # Create probability for each node
-    # proba_feat = []
-    # for i in ordered_feat:
-    #     cur_layer = i[0][0]
-    #     elem = (i[0], float(i[1]) / pCountS[cur_layer][1])
-    #     print elem
-    #     proba_feat.append(elem)
-
-    # Get max histogram
-    # max_node_occurence = max(counter.values())
     divider = len(comp_list)
-
     # Create probability for each node
     proba_feat = []
     for i in ordered_feat:
@@ -305,7 +291,7 @@ def filter_noisy_cluster(grouped_components):
                 v = sorted(active_nodes.values(), reverse=True)
                 # if the most represented value is at least
                 # two times more present than the second most represented one
-                if v[0] >= 2 * v[1]:
+                if v[0] >= 1.5 * v[1]:
                     filt_grouped_components[i] = cluster
             else:
                 filt_grouped_components[i] = cluster
@@ -313,15 +299,21 @@ def filter_noisy_cluster(grouped_components):
     return filt_grouped_components
 
 
-def plot_component_repartition(figsize, components, cluster_count, columns=8):
+def plot_component_repartition(figsize,
+                               components, cluster_count, columns=8,
+                               labels=None):
     plt.figure(1, figsize)
     nn = cluster_count
     rows = math.ceil(float(len(components)) / columns)
     for i in xrange(nn):
-        plt.subplot(rows, columns, i+1)
         active_nodes = list(itertools.chain(*[ c.func_ids for c in components[i]]))
-        plt.hist(active_nodes, FUNC_ZONES)
-        plt.title('Cluster id: ' + str(i))
+        if active_nodes:
+            plt.subplot(rows, columns, i+1)
+            plt.hist(active_nodes, FUNC_ZONES)
+            v = str(i)
+            if labels:
+                v = str(labels[i])
+            plt.title('Cluster id: ' + v)
 
     plt.tight_layout()
     plt.show()
@@ -503,7 +495,7 @@ class Component(object):
         nx.draw_networkx_nodes(g, pos,
                                node_size=80,
                                node_color=color,
-                               cmap=plt.cm.PuOr)
+                               cmap=plt.cm.YlOrRd)
 
         label_start_x = -7
         label_end_x = -2
@@ -527,7 +519,7 @@ class Component(object):
         ax.set_yticklabels([])
         ax.grid(False)
 
-    def draw(self, figid=None, figsize=None):
+    def draw(self, figid=None, figsize=None, filter_unique_act=True):
         if self.g.number_of_nodes() == 0:
             print 'Empty graph for component', self.id
             return None
@@ -538,13 +530,22 @@ class Component(object):
         fig.set_visible(False)
         fig.suptitle('Patterns of component ' +
                      str(self.id), fontsize=14, fontweight='bold')
+        to_draw = True
         ax1 = None
         for i, s in enumerate(self.subgraphs):
-            ax = fig.add_subplot(len(self.subgraphs), 1, i)
-            if i == 0:
-                ax1 = ax
-            self._draw_graph(fig, ax, s)
-        ax1.set_xlabel('time step')  # set only for last figure
+            # Check that height of subgraph is superior to 1 to draw
+            if filter_unique_act:
+                h = len(set(
+                    nx.get_node_attributes(s, 'input_id').values()))
+                if h < 2:
+                    to_draw = False
+            if to_draw:
+                ax = fig.add_subplot(len(self.subgraphs), 1, i)
+                if i == 0:
+                    ax1 = ax
+                self._draw_graph(fig, ax, s)
+        if to_draw:
+            ax1.set_xlabel('time step')  # set only for last figure
         return fig
 
     def __str__(self):
