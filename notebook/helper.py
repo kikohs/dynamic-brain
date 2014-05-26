@@ -122,18 +122,17 @@ def build_graph_from_feature_tuples(X, tol, input_graph=AG):
     # the list is ordered by layer and input_id
     nb_layers = X[-1][0][0] + 1
     input_node_count = input_graph.number_of_nodes()
-
     # Create edges, and crate nodes if needed
     for i in xrange(nb_layers - 1):
         # for each current node
         for c in itertools.ifilter(lambda x: x[0][0] == i
                                    and (x[1] > tol or x[1] < -tol), X):
-            input_id = c[0][1] + 1
+            input_id = c[0][1]
             src = input_id + (i * input_node_count)
             for n in itertools.ifilter(lambda x: x[0][0] == i + 1
                                        and (x[1] > tol or x[1] < -tol), X):
 
-                tgt_in_id = n[0][1] + 1
+                tgt_in_id = n[0][1]
                 tgt = tgt_in_id + ((i + 1) * input_node_count)
                 # Check that input_id are real adajcent in the global
                 # adjacency matrix. Beware, ids in adj matrix starts at 0
@@ -188,7 +187,7 @@ def export_components_to_matlab(method_name, components, overrideFolder=False):
             for p in patterns:
                 a = np.zeros((FUNC_NODE_COUT,), dtype=np.int8)
                 for k, v in p.input_ids.iteritems():
-                    a[k-1] = v
+                    a[k - 1] = v
                 plist.append(a)
 
             out['component_' + str(c.id)] = np.array(plist)
@@ -211,7 +210,91 @@ def draw_and_save_patterns(method_name, components, meta_title=None):
                                    '.png'))
 
 
-def rebuild_component_from_cluster(comp_id, comp_list, tol):
+def extract_transition_state(component):
+    states = []
+    G = component.g
+    # iter though nodes
+    for n, d in G.nodes_iter(data=True):
+        # get neighbors in the next time step
+        neighbors = filter(lambda x: G.node[x]['layer_pos'] > d['layer_pos'],
+                           G[n])
+        if neighbors:
+            start = d['input_id']
+            pos = d['layer_pos']
+            # get input_ids for all neighbors
+            for neigh in neighbors:
+                # state = (start, G.node[neigh]['input_id'])
+                state = (pos, (start, G.node[neigh]['input_id']))
+                states.append(state)
+    return states
+
+
+def extract_edge_probs_from_cluster(components):
+    states = []
+    # for each component
+    for c in components:
+        states += extract_transition_state(c)
+    # group states per {timestep: {src: (tgt, occurence)}}
+    grouped_states = defaultdict(lambda:
+                                 defaultdict(lambda:
+                                             defaultdict(float)))
+    # for k, v in states:
+    #     grouped_states[k].append(v)
+    # # count the repetition of values for each input id
+    # result = dict()
+    # for k, v in grouped_states.iteritems():
+    #     probas = dict()
+    #     # Create histogram of states
+    #     hist = Counter(v)
+    #     # Divide by total number of edges for this node
+    #     divider = sum(hist.itervalues())
+    #     for i, j in hist.iteritems():
+    #         probas[i] = float(j) / divider
+    #     # add to final result
+    #     result[k] = probas
+
+    # Counts for each layer and src how many tgt have been seen
+    counts = defaultdict(lambda: defaultdict(int))
+    # Count occurence
+    for l, v in states:
+        src = v[0]
+        tgt = v[1]
+        counts[l][src] += 1
+        grouped_states[l][src][tgt] += 1
+
+    for l, src_dict in grouped_states.iteritems():
+        for src, tgt_dict in src_dict.iteritems():
+            for tgt, count in tgt_dict.iteritems():
+                grouped_states[l][src][tgt] = count / counts[l][src]
+
+    return grouped_states
+
+
+def filter_component_edges(component, edge_probs, edge_tol):
+    G = component.g
+    to_remove = []
+    for n, d in G.nodes_iter(data=True):
+        # get neighbors in the next time step
+        neighbors = filter(lambda x: G.node[x]['layer_pos'] > d['layer_pos'],
+                           G[n])
+        if neighbors:
+            src = d['input_id']
+            layer = d['layer_pos']
+            # get input_ids for all neighbors
+            for neigh in neighbors:
+                tgt = G.node[neigh]['input_id']
+                # Get edge weight
+                weight = edge_probs[layer][src][tgt]
+                if weight > edge_tol:
+                    G[n][neigh]['weight'] = weight
+                else:
+                    to_remove.append((n, neigh))
+    G.remove_edges_from(to_remove)
+    component.extract_properties()
+    return component
+
+
+def rebuild_component_from_cluster(comp_id, comp_list, node_tol, edge_tol=0.0):
     """Extract average component from a list of
     component in the same cluster
     """
@@ -231,9 +314,10 @@ def rebuild_component_from_cluster(comp_id, comp_list, tol):
 
     p = Component(comp_id)
     p.cluster_id = comp_list[0].cluster_id
-    p.reconstruct_from_list(proba_feat, tol)
+    p.reconstruct_from_list(proba_feat, node_tol)
 
-    return p
+    edge_probs = extract_edge_probs_from_cluster(comp_list)
+    return filter_component_edges(p, edge_probs, edge_tol)
 
 
 def create_binary_feature_matrix(components):
@@ -302,7 +386,7 @@ def filter_noisy_cluster(grouped_components):
 def plot_component_repartition(figsize,
                                components, cluster_count, columns=8,
                                labels=None):
-    plt.figure(1, figsize)
+    f = plt.figure(1, figsize)
     nn = cluster_count
     rows = math.ceil(float(len(components)) / columns)
     for i in xrange(nn):
@@ -317,6 +401,7 @@ def plot_component_repartition(figsize,
 
     plt.tight_layout()
     plt.show()
+    return f
 
 
 def plot_component_width_and_height(figsize, components, title='Component'):
@@ -415,6 +500,9 @@ class Component(object):
                 last_pos += 1
 
             relative_pos = layer_positions[lp]
+            # update layer pos
+            self.g.node[n]['layer_pos'] = relative_pos
+
             self.feat.append((relative_pos, input_id))
             inIds.update({input_id: 1})
 
@@ -522,6 +610,9 @@ class Component(object):
     def draw(self, figid=None, figsize=None, filter_unique_act=True):
         if self.g.number_of_nodes() == 0:
             print 'Empty graph for component', self.id
+            return None
+        if self.g.number_of_edges() == 0:
+            print 'No edges for component', self.id
             return None
         subgraph_height = 10
         if not figsize:
