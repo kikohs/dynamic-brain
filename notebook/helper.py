@@ -383,6 +383,20 @@ def filter_noisy_cluster(grouped_components):
     return filt_grouped_components
 
 
+def group_components_by_rs_from_clusters(gc):
+    resting_states_groups = dict()
+    for cluster in gc:
+        active_nodes = list(itertools.chain(*[c.func_ids for c in cluster]))
+        counter = Counter(active_nodes)
+        label = counter.most_common(1)[0][0]
+        if label in resting_states_groups:
+            resting_states_groups[label] += cluster
+        else:
+            resting_states_groups[label] = []
+    # sort dict by key
+    return OrderedDict(sorted(resting_states_groups.items()))
+
+
 def plot_component_repartition(figsize,
                                components, cluster_count, columns=8,
                                labels=None):
@@ -576,13 +590,37 @@ class Component(object):
             patterns.append(p)
         return patterns
 
-    def _draw_graph(self, fig, ax, g):
+    def _draw_graph(self, fig, ax, g, compress):
         pos = nx.get_node_attributes(g, 'pos')
-        color = nx.get_node_attributes(g, 'weight').values()
-        nx.draw_networkx_edges(g, pos, alpha=0.4)
+
+        # Rescale y
+        if compress:
+            y_dict = {}
+            last_y = -1
+            sort_pos = OrderedDict(sorted(pos.items()))
+            for k, v in sort_pos.iteritems():
+                input_id = g.node[k]['input_id']
+                if input_id not in y_dict:
+                    last_y += 1
+                    y_dict[input_id] = last_y
+                pos[k] = (pos[k][0], y_dict[input_id])
+
+        edge_flat = sorted(nx.get_edge_attributes(g, 'weight').items())
+        edge_col = map(lambda x: x[1], edge_flat)
+        nx.draw_networkx_edges(g, pos, alpha=1.0,
+                               width=3.0,
+                               edge_color=edge_col,
+                               edge_cmap=plt.cm.binary,
+                               edge_vmin=0.0,
+                               edge_vmax=1.0)
+
+        node_flat = sorted(nx.get_node_attributes(g, 'weight').items())
+        node_col = map(lambda x: x[1], node_flat)
         nx.draw_networkx_nodes(g, pos,
                                node_size=80,
-                               node_color=color,
+                               node_color=node_col,
+                               vmin=0.0,
+                               vmax=1.0,
                                cmap=plt.cm.YlOrRd)
 
         label_start_x = -7
@@ -606,37 +644,49 @@ class Component(object):
         # plt.ylim(0, last_id * Y_SPACING)
         ax.set_yticklabels([])
         ax.grid(False)
+        ax.set_xlabel('time step')
 
-    def draw(self, figid=None, figsize=None, filter_unique_act=True):
+    def draw(self, figid=None, figsize=None,
+             filter_unique_act=True, with_title=False, compress=True):
+
         if self.g.number_of_nodes() == 0:
             print 'Empty graph for component', self.id
             return None
         if self.g.number_of_edges() == 0:
             print 'No edges for component', self.id
             return None
-        subgraph_height = 10
-        if not figsize:
-            figsize = (16, len(self.subgraphs) * subgraph_height + 1)
-        fig = plt.figure(figid, figsize=figsize, dpi=360)
-        fig.set_visible(False)
-        fig.suptitle('Patterns of component ' +
-                     str(self.id), fontsize=14, fontweight='bold')
-        to_draw = True
-        ax1 = None
+
+        # subgraphs to draw
+        to_draw = []
         for i, s in enumerate(self.subgraphs):
             # Check that height of subgraph is superior to 1 to draw
             if filter_unique_act:
                 h = len(set(
                     nx.get_node_attributes(s, 'input_id').values()))
-                if h < 2:
-                    to_draw = False
-            if to_draw:
-                ax = fig.add_subplot(len(self.subgraphs), 1, i)
-                if i == 0:
-                    ax1 = ax
-                self._draw_graph(fig, ax, s)
-        if to_draw:
-            ax1.set_xlabel('time step')  # set only for last figure
+                if h >= 2:
+                    to_draw.append(s)
+            else:
+                to_draw.append(s)
+
+        # Figure properties
+        subgraph_height = 10
+        if not figsize:
+            width = 16
+            if compress:
+                width = 10
+                subgraph_height = 3
+            figsize = (width, len(to_draw) * subgraph_height + 1)
+        fig = plt.figure(figid, figsize=figsize, dpi=360)
+        fig.set_visible(False)
+        if with_title:
+            fig.suptitle('Patterns of component ' +
+                         str(self.id), fontsize=14, fontweight='bold')
+
+        # Actual draw
+        for i, s in enumerate(to_draw):
+            ax = fig.add_subplot(len(to_draw), 1, i)
+            self._draw_graph(fig, ax, s, compress)
+
         return fig
 
     def __str__(self):
