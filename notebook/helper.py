@@ -55,7 +55,7 @@ def create_node_data(layer_id, input_id, weight,
                      brain_lab=BRAIN_LABELS, brain_func_ids=FUNC_IDS):
     data = {}
     data['ts_group_id'] = 0
-    data['layer_pos'] = layer_id
+    data['slice_pos'] = layer_id
     data['input_id'] = input_id
     data['func_id'] = brain_func_ids[input_id - 1]  # 0 to 67 entries
     data['weight'] = weight
@@ -216,11 +216,11 @@ def extract_transition_state(component):
     # iter though nodes
     for n, d in G.nodes_iter(data=True):
         # get neighbors in the next time step
-        neighbors = filter(lambda x: G.node[x]['layer_pos'] > d['layer_pos'],
+        neighbors = filter(lambda x: G.node[x]['slice_pos'] > d['slice_pos'],
                            G[n])
         if neighbors:
             start = d['input_id']
-            pos = d['layer_pos']
+            pos = d['slice_pos']
             # get input_ids for all neighbors
             for neigh in neighbors:
                 # state = (start, G.node[neigh]['input_id'])
@@ -275,11 +275,11 @@ def filter_component_edges(component, edge_probs, edge_tol):
     to_remove = []
     for n, d in G.nodes_iter(data=True):
         # get neighbors in the next time step
-        neighbors = filter(lambda x: G.node[x]['layer_pos'] > d['layer_pos'],
+        neighbors = filter(lambda x: G.node[x]['slice_pos'] > d['slice_pos'],
                            G[n])
         if neighbors:
             src = d['input_id']
-            layer = d['layer_pos']
+            layer = d['slice_pos']
             # get input_ids for all neighbors
             for neigh in neighbors:
                 tgt = G.node[neigh]['input_id']
@@ -317,7 +317,9 @@ def rebuild_component_from_cluster(comp_id, comp_list, node_tol, edge_tol=0.0):
     p.reconstruct_from_list(proba_feat, node_tol)
 
     edge_probs = extract_edge_probs_from_cluster(comp_list)
-    return filter_component_edges(p, edge_probs, edge_tol)
+    p = filter_component_edges(p, edge_probs, edge_tol)
+
+    return p
 
 
 def create_binary_feature_matrix(components):
@@ -496,38 +498,36 @@ class Component(object):
         self.feat = []
         self.func_ids = []
 
-        inIds = Counter()
+        # Calc relative layer position for each node
+        self.layers = set(nx.get_node_attributes(self.g, 'slice_pos').values())
         layer_positions = OrderedDict()
-        last_pos = 0
+        i = 0
+        for l in sorted(self.layers):
+            layer_positions[l] = i
+            i += 1
 
+        self.layers = layer_positions.values()
+        inIds = Counter()
         # iter through nodes to extract properties such as
         # layers, width, height, features, compressed features
         for n, d in self.g.nodes_iter(data=True):
             self.ts_group = d['ts_group_id']
-            lp = d['layer_pos']
+            lp = d['slice_pos']
             input_id = d['input_id']
             self.func_ids.append(int(d['func_id']))
-
-            # needed to compute relative postion (0, 1, 2) of this component
-            if lp not in layer_positions:
-                layer_positions[lp] = last_pos
-                last_pos += 1
-
-            relative_pos = layer_positions[lp]
-            # update layer pos
-            self.g.node[n]['layer_pos'] = relative_pos
-
-            self.feat.append((relative_pos, input_id))
             inIds.update({input_id: 1})
 
-        self.layers = sorted(layer_positions.keys())
+            relative_pos = layer_positions[lp]
+            # update layer pos, and x
+            self.g.node[n]['slice_pos'] = relative_pos
+            self.g.node[n]['x'] = relative_pos * X_SPACING
+            self.g.node[n]['pos'] = (self.g.node[n]['x'], self.g.node[n]['y'])
+            self.feat.append((relative_pos, input_id))
+
         self.input_ids = OrderedDict(sorted(
-            inIds.iteritems(), key=lambda t: t[0]))
+                                     inIds.iteritems(), key=lambda t: t[0]))
 
-        # Compute probability for each input id
-        # self.compfeat = [(k, float(v) / self.width())
-        #                  for k, v in self.input_ids.iteritems()]
-
+        # Compressed features
         self.compfeat = [(k, v) for k, v in self.input_ids.iteritems()]
         # Extract subgraphs
         self.subgraphs = nx.connected_component_subgraphs(self.g)
@@ -590,32 +590,54 @@ class Component(object):
             patterns.append(p)
         return patterns
 
-    def _draw_graph(self, fig, ax, g, compress):
+    def _draw_graph(self, fig, ax, g, compress, color_edge):
         pos = nx.get_node_attributes(g, 'pos')
-
         # Rescale y
         if compress:
-            y_dict = {}
-            last_y = -1
-            sort_pos = OrderedDict(sorted(pos.items()))
-            for k, v in sort_pos.iteritems():
-                input_id = g.node[k]['input_id']
-                if input_id not in y_dict:
-                    last_y += 1
-                    y_dict[input_id] = last_y
-                pos[k] = (pos[k][0], y_dict[input_id])
+            # Map old y to new rescaled y
+            inputs = list(sorted(set(
+                nx.get_node_attributes(g, 'input_id').values())))
+            rh = filter(lambda x: x <= (FUNC_NODE_COUT + 1) / 2, inputs)
+            # invert order
+            lh = filter(lambda x: x > (FUNC_NODE_COUT + 1) / 2, inputs)[::-1]
 
-        edge_flat = sorted(nx.get_edge_attributes(g, 'weight').items())
-        edge_col = map(lambda x: x[1], edge_flat)
-        nx.draw_networkx_edges(g, pos, alpha=1.0,
+            input_dict = OrderedDict()
+            y = 0
+            for l in rh:
+                input_dict[l] = y
+                y += 1
+
+            y += Y_SPACING  # small separation between hemishperes
+
+            for l in lh:
+                input_dict[l] = y
+                y += 1
+
+            # iter through nodes and update y
+            for k, v in pos.iteritems():
+                input_id = g.node[k]['input_id']
+                pos[k] = (pos[k][0], input_dict[input_id])
+
+        edge_col = 'grey'
+        alpha = 0.4
+        if color_edge:
+            # Extract color map from edge weights
+            try:
+                edge_col = [g[a][b]['weight'] for a, b in g.edges()]
+                alpha = 1.0
+            except:
+                pass
+            if len(edge_col) == 0:
+                edge_col = 'grey'
+
+        nx.draw_networkx_edges(g, pos, alpha=alpha,
                                width=3.0,
                                edge_color=edge_col,
                                edge_cmap=plt.cm.binary,
                                edge_vmin=0.0,
                                edge_vmax=1.0)
 
-        node_flat = sorted(nx.get_node_attributes(g, 'weight').items())
-        node_col = map(lambda x: x[1], node_flat)
+        node_col = nx.get_node_attributes(g, 'weight').values()
         nx.draw_networkx_nodes(g, pos,
                                node_size=80,
                                node_color=node_col,
@@ -625,10 +647,15 @@ class Component(object):
 
         label_start_x = -7
         label_end_x = -2
+
         for k, p in pos.iteritems():
+            name = ''
+            if 'name' in g.node[k]:
+                name = g.node[k]['name']
+
             lab = str(g.node[k]['input_id']) + ' ' + \
-                g.node[k]['name'] + ' ' + \
-                str(g.node[k]['func_id'])
+                name + ' ' + \
+                '(' + str(g.node[k]['func_id']) + ')'
             ax.text(label_start_x, p[1], lab, fontsize=14)
 
         last_layer = self.layers[-1]
@@ -647,7 +674,8 @@ class Component(object):
         ax.set_xlabel('time step')
 
     def draw(self, figid=None, figsize=None,
-             filter_unique_act=True, with_title=False, compress=True):
+             filter_unique_act=True, with_title=False, compress=True,
+             color_edge=True):
 
         if self.g.number_of_nodes() == 0:
             print 'Empty graph for component', self.id
@@ -673,7 +701,7 @@ class Component(object):
         if not figsize:
             width = 16
             if compress:
-                width = 10
+                width = 12
                 subgraph_height = 3
             figsize = (width, len(to_draw) * subgraph_height + 1)
         fig = plt.figure(figid, figsize=figsize, dpi=360)
@@ -685,7 +713,7 @@ class Component(object):
         # Actual draw
         for i, s in enumerate(to_draw):
             ax = fig.add_subplot(len(to_draw), 1, i)
-            self._draw_graph(fig, ax, s, compress)
+            self._draw_graph(fig, ax, s, compress, color_edge)
 
         return fig
 
