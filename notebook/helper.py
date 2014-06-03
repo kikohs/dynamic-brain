@@ -410,6 +410,13 @@ def plot_component_repartition(figsize,
         if active_nodes:
             plt.subplot(rows, columns, i+1)
             plt.hist(active_nodes, FUNC_ZONES)
+            plt.tick_params(
+                axis='both',
+                which='both',
+                top='off',
+                bottom='off',
+                right='off',
+                labeltop='off')
             v = str(i)
             if labels:
                 v = str(labels[i])
@@ -648,6 +655,8 @@ class Component(object):
         label_start_x = -7
         label_end_x = -2
 
+        name_set = set()
+
         for k, p in pos.iteritems():
             name = ''
             if 'name' in g.node[k]:
@@ -656,7 +665,10 @@ class Component(object):
             lab = str(g.node[k]['input_id']) + ' ' + \
                 name + ' ' + \
                 '(' + str(g.node[k]['func_id']) + ')'
-            ax.text(label_start_x, p[1], lab, fontsize=14)
+            name_set.add((label_start_x, p[1], lab))
+
+        for t in name_set:
+            ax.text(t[0], t[1], t[2], fontsize=16, fontweight='normal')
 
         last_layer = self.layers[-1]
         full_width = last_layer + 1
@@ -667,11 +679,26 @@ class Component(object):
         plt.xlim(label_start_x - 1,
                  label_end_x + X_SPACING + last_layer * X_SPACING)
 
+        plt.tick_params(
+            axis='y',
+            which='both',
+            left='off',
+            top='off',
+            right='off',
+            labeltop='off',
+            labelleft='off')
+
+        plt.tick_params(
+            axis='x',          # changes apply to the x-axis
+            which='both',      # both major and minor ticks are affected
+            top='off',         # ticks along the top edge are off
+            labeltop='off')  # labels along the bottom edge are off
         # last_id = self.input_ids.keys()[-1]
         # plt.ylim(0, last_id * Y_SPACING)
-        ax.set_yticklabels([])
+
         ax.grid(False)
-        ax.set_xlabel('time step')
+        ax.set_xlabel('timesteps')
+        # plt.subplots_adjust(left=0.0, right=0.4, bottom=0.0, top=0.9)
 
     def draw(self, figid=None, figsize=None,
              filter_unique_act=True, with_title=False, compress=True,
@@ -701,14 +728,14 @@ class Component(object):
         if not figsize:
             width = 16
             if compress:
-                width = 12
+                width = 13
                 subgraph_height = 3
             figsize = (width, len(to_draw) * subgraph_height + 1)
-        fig = plt.figure(figid, figsize=figsize, dpi=360)
+        fig = plt.figure(figid, figsize=figsize)
         fig.set_visible(False)
         if with_title:
             fig.suptitle('Patterns of component ' +
-                         str(self.id), fontsize=14, fontweight='bold')
+                         str(self.id), fontsize=16, fontweight='bold')
 
         # Actual draw
         for i, s in enumerate(to_draw):
