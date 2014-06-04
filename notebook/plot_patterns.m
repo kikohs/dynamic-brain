@@ -7,7 +7,9 @@ function plot_patterns(filepath)
     nb_comp = size(patterns);
     nb_comp = nb_comp(1);
     for i=1:nb_comp
-        plot_brain_signal(names(i){1}, cell2mat(patterns(i)))
+        name = names(i);
+        name = name{1};
+        plot_brain_signal(name, cell2mat(patterns(i)));
     end
 
 function plot_brain_signal(name, sig_values, varargin)
@@ -61,6 +63,7 @@ function plot_brain_signal(name, sig_values, varargin)
     save_fig(name, 3, [90, 0], j, out_folder)
     save_fig(name, 4, [-90, 0], j, out_folder)
     save_fig(name, 5, [0, 90], k, out_folder)
+    close all
 
 
 function save_fig(name, subid, viewpoint, handle, out_folder)
@@ -69,5 +72,6 @@ function save_fig(name, subid, viewpoint, handle, out_folder)
     camlight; % creates a light right and up from camera
     lighting gouraud; % specify lighting algorithm
     path = strcat(out_folder, name, '_', num2str(subid));
-    print(handle, '-depsc', path)
-    print(handle, '-dpng', path)
+%     print(handle, '-depsc', path)
+%     print(handle, '-dpng', path)
+    export_fig(path, '-png', '-transparent', handle);

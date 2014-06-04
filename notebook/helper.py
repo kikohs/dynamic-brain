@@ -10,6 +10,7 @@ from networkx.readwrite import json_graph
 import scipy as sp
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import scipy.io
 import json
 from collections import Counter, OrderedDict, defaultdict, Callable
@@ -207,7 +208,7 @@ def draw_and_save_patterns(method_name, components, meta_title=None):
             f.set_visible(True)
             f.savefig(os.path.join(NOTEBOOK_OUT_DIR, method_name + '/' +
                                    method_name + '_' + str(i) +
-                                   '.png'))
+                                   '.png'), bbox_inches='tight')
 
 
 def extract_transition_state(component):
@@ -472,6 +473,25 @@ def plot_component_func_repartition(figsize, components,
     plt.show()
 
 
+def on_draw(event):
+    bboxes = []
+    for label in labels:
+        bbox = label.get_window_extent()
+        # the figure transform goes from relative coords->pixels and we
+        # want the inverse of that
+        bboxi = bbox.inverse_transformed(fig.transFigure)
+        bboxes.append(bboxi)
+
+    # this is the bbox that bounds all the bboxes, again in relative
+    # figure coords
+    bbox = mtransforms.Bbox.union(bboxes)
+    if fig.subplotpars.left < bbox.width:
+        # we need to move it over
+        fig.subplots_adjust(left=1.1*bbox.width) # pad a little
+        fig.canvas.draw()
+    return False
+
+
 class Component(object):
 
     def __init__(self, component_id):
@@ -614,7 +634,7 @@ class Component(object):
                 input_dict[l] = y
                 y += 1
 
-            y += Y_SPACING  # small separation between hemishperes
+            y += Y_SPACING - 1  # small separation between hemishperes
 
             for l in lh:
                 input_dict[l] = y
@@ -646,7 +666,7 @@ class Component(object):
 
         node_col = nx.get_node_attributes(g, 'weight').values()
         nx.draw_networkx_nodes(g, pos,
-                               node_size=80,
+                               node_size=120,
                                node_color=node_col,
                                vmin=0.0,
                                vmax=1.0,
@@ -675,7 +695,7 @@ class Component(object):
         x_labels = np.arange(full_width)
         x_ticks = np.arange(0, (full_width * X_SPACING), X_SPACING)
 
-        plt.xticks(x_ticks, x_labels, size='large')
+        plt.xticks(x_ticks, x_labels, fontsize=16)
         plt.xlim(label_start_x - 1,
                  label_end_x + X_SPACING + last_layer * X_SPACING)
 
@@ -697,8 +717,7 @@ class Component(object):
         # plt.ylim(0, last_id * Y_SPACING)
 
         ax.grid(False)
-        ax.set_xlabel('timesteps')
-        # plt.subplots_adjust(left=0.0, right=0.4, bottom=0.0, top=0.9)
+
 
     def draw(self, figid=None, figsize=None,
              filter_unique_act=True, with_title=False, compress=True,
@@ -741,6 +760,8 @@ class Component(object):
         for i, s in enumerate(to_draw):
             ax = fig.add_subplot(len(to_draw), 1, i)
             self._draw_graph(fig, ax, s, compress, color_edge)
+
+        # ax.set_xlabel('timesteps', fontsize=14)
 
         return fig
 
